@@ -1,0 +1,197 @@
+package com.example.anonymousmessenger
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.google.firebase.database.*
+import kotlin.math.max
+import kotlin.math.min
+
+class MainActivity : ComponentActivity() {
+
+    private lateinit var db: DatabaseReference
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        db = FirebaseDatabase.getInstance().reference
+
+        setContent {
+            AnonymousMessengerApp(db)
+        }
+    }
+}
+
+@Composable
+fun AnonymousMessengerApp(db: DatabaseReference) {
+
+    var username by remember { mutableStateOf("") }
+    var targetUser by remember { mutableStateOf("") }
+    var messageText by remember { mutableStateOf("") }
+    var chatId by remember { mutableStateOf("") }
+    var loggedIn by remember { mutableStateOf(false) }
+    var messages by remember { mutableStateOf(listOf<String>()) }
+    var status by remember { mutableStateOf("Offline") }
+
+    fun openChat() {
+        chatId = if (username < targetUser)
+            "${username}_${targetUser}"
+        else
+            "${targetUser}_${username}"
+
+        db.child("status").child(username).setValue("Online")
+
+        db.child("status").child(targetUser)
+            .addValueEventListener(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    status = snapshot.value?.toString() ?: "Offline"
+                }
+
+                override fun onCancelled(error: DatabaseError) {}
+            })
+
+        db.child("chats").child(chatId)
+            .addValueEventListener(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val list = mutableListOf<String>()
+                    for (s in snapshot.children) {
+                        s.getValue(String::class.java)?.let { list.add(it) }
+                    }
+                    messages = list
+                }
+
+                override fun onCancelled(error: DatabaseError) {}
+            })
+    }
+
+    MaterialTheme {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+
+            if (!loggedIn) {
+                Text("Anonymous Messenger", style = MaterialTheme.typography.h6)
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Choose Username") }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                Button(onClick = {
+                    if (username.isNotBlank()) {
+                        db.child("users").child(username).setValue(true)
+                        loggedIn = true
+                    }
+                }) {
+                    Text("Login")
+                }
+
+            } else {
+                Text("Logged in as: $username")
+                Spacer(Modifier.height(5.dp))
+                Text("Status: $status")
+
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = targetUser,
+                    onValueChange = { targetUser = it },
+                    label = { Text("Chat with user") }
+                )
+
+                Spacer(Modifier.height(5.dp))
+
+                Button(onClick = {
+                    if (targetUser.isNotBlank()) openChat()
+                }) {
+                    Text("Start Private Chat")
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    items(messages) { msg ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(4.dp),
+                            elevation = 4.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(msg)
+                                if (msg.startsWith(username)) {
+                                    Button(
+                                        onClick = {
+                                            db.child("chats").child(chatId)
+                                                .orderByValue().equalTo(msg)
+                                                .addListenerForSingleValueEvent(
+                                                    object : ValueEventListener {
+                                                        override fun onDataChange(snapshot: DataSnapshot) {
+                                                            for (c in snapshot.children) {
+                                                                c.ref.removeValue()
+                                                            }
+                                                        }
+
+                                                        override fun onCancelled(error: DatabaseError) {}
+                                                    })
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            backgroundColor = MaterialTheme.colors.error
+                                        )
+                                    ) {
+                                        Text("Del")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = messageText,
+                    onValueChange = { messageText = it },
+                    label = { Text("Message") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(5.dp))
+
+                Button(
+                    onClick = {
+                        if (messageText.isNotBlank() && chatId.isNotEmpty()) {
+                            db.child("chats").child(chatId)
+                                .push()
+                                .setValue("$username: $messageText")
+                            messageText = ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Send")
+                }
+            }
+        }
+    }
+}
